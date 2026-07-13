@@ -36,6 +36,8 @@ Route::prefix('admin')->group(function () {
         Route::post('/logout', [Admin\AuthController::class, 'logout']);
         Route::get('/me', [Admin\AuthController::class, 'me']);
 
+        Route::get('dashboard', [Admin\DashboardController::class, 'index']);
+
         Route::get('2fa', [Admin\TwoFactorController::class, 'status']);
         Route::post('2fa/setup', [Admin\TwoFactorController::class, 'setup']);
         Route::post('2fa/enable', [Admin\TwoFactorController::class, 'enable']);
