@@ -1,7 +1,9 @@
 <?php
 
 use App\Http\Controllers\Api\AccountRecoveryController;
+use App\Http\Controllers\Api\Admin as Admin;
 use App\Http\Controllers\Api\LicenseController;
+use App\Http\Middleware\RestrictAdminByIp;
 use Illuminate\Support\Facades\Route;
 
 Route::prefix('v1')
@@ -19,3 +21,38 @@ Route::prefix('v1')
             Route::post('/account-recovery/redeem', [AccountRecoveryController::class, 'redeem']);
         });
     });
+
+// Face ADMIN (API) : consommée par l'app Flutter d'administration.
+// Authentification par token Sanctum (pas de session/cookie), IP
+// restreinte par liste blanche (ADMIN_ALLOWED_IPS).
+Route::prefix('admin')->group(function () {
+    Route::post('/login', [Admin\AuthController::class, 'login'])->middleware('throttle:6,1');
+
+    // Deuxième étape du login (code TOTP), non authentifiée puisque le
+    // token Sanctum n'est délivré qu'à l'issue de cette vérification.
+    Route::post('/2fa/challenge', [Admin\TwoFactorController::class, 'challenge'])->middleware('throttle:10,1');
+
+    Route::middleware(['auth:sanctum', RestrictAdminByIp::class])->group(function () {
+        Route::post('/logout', [Admin\AuthController::class, 'logout']);
+        Route::get('/me', [Admin\AuthController::class, 'me']);
+
+        Route::get('2fa', [Admin\TwoFactorController::class, 'status']);
+        Route::post('2fa/setup', [Admin\TwoFactorController::class, 'setup']);
+        Route::post('2fa/enable', [Admin\TwoFactorController::class, 'enable']);
+        Route::post('2fa/disable', [Admin\TwoFactorController::class, 'disable']);
+
+        Route::apiResource('products', Admin\ProductController::class);
+        Route::apiResource('customers', Admin\CustomerController::class);
+
+        Route::apiResource('license-keys', Admin\LicenseKeyController::class);
+        Route::post('license-keys/{license_key}/revoke', [Admin\LicenseKeyController::class, 'revoke']);
+        Route::get('license-keys/{license_key}/reveal', [Admin\LicenseKeyController::class, 'reveal']);
+
+        Route::apiResource('activations', Admin\ActivationController::class);
+        Route::post('activations/{activation}/release', [Admin\ActivationController::class, 'release']);
+        Route::post('activations/{activation}/account-recovery-codes', [Admin\ActivationController::class, 'generateRecoveryCode']);
+
+        Route::get('license-logs', [Admin\LicenseLogController::class, 'index']);
+        Route::get('account-recovery-codes', [Admin\AccountRecoveryCodeController::class, 'index']);
+    });
+});

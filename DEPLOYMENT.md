@@ -7,6 +7,11 @@ Gestionnaire de fichiers/FTP + Cron Jobs : Composer et Artisan tournent
 directement sur le serveur, pas besoin de construire un paquet `vendor/`
 en local ni de zipper le projet.
 
+Ce projet est **API-only** : pas de panel web. L'administration se fait
+depuis l'app Flutter dédiée (token Sanctum + 2FA optionnel sur
+`/api/admin/*`), et la documentation interactive des endpoints est servie
+par Swagger UI sur `/api/documentation`.
+
 ---
 
 ## 0. Prérequis à vérifier dans cPanel
@@ -142,7 +147,7 @@ embarquer dans le module client Flutter (voir
 
 ```bash
 php artisan migrate --force
-php artisan make:filament-user --name="Admin" --email="drickoma@gmail.com" --password="CHANGE-MOI-UN-MOT-DE-PASSE-FORT" --no-interaction
+php artisan admin:create-user --name="Admin" --email="drickoma@gmail.com" --password="CHANGE-MOI-UN-MOT-DE-PASSE-FORT"
 ```
 
 ---
@@ -164,11 +169,17 @@ serveur).
 php artisan config:cache
 php artisan route:cache
 php artisan view:cache
+php artisan l5-swagger:generate
 ```
 
 ⚠️ Si tu modifies `.env` **après** avoir fait `config:cache`, les
 changements ne seront pas pris en compte tant que tu n'auras pas relancé
 `php artisan config:clear`.
+
+La doc Swagger n'est **pas** régénérée automatiquement à chaque requête en
+production (`L5_SWAGGER_GENERATE_ALWAYS=false` par défaut, pour les
+perfs) : relance `php artisan l5-swagger:generate` après toute
+modification des annotations `#[OA\...]` dans les contrôleurs.
 
 ---
 
@@ -186,12 +197,15 @@ point.
 
 ## 9. Vérification finale
 
-1. Ouvre `https://keys.agoudatech.com/admin/login` → la page de connexion
-   Filament doit s'afficher, avec un cadenas HTTPS valide.
-2. Connecte-toi avec le compte admin créé à l'étape 5.
-3. Crée un produit de test, génère une clé
-   (`php artisan license:generate` en SSH, ou directement dans le panel).
-4. Teste l'API :
+1. Ouvre `https://keys.agoudatech.com/` → doit renvoyer un JSON de statut
+   (`{"service": "...", "status": "ok", ...}`), avec un cadenas HTTPS valide.
+2. Ouvre `https://keys.agoudatech.com/api/documentation` → Swagger UI doit
+   lister tous les endpoints (`/api/v1/*` et `/api/admin/*`).
+3. Connecte-toi à l'API admin (`POST /api/admin/login`) avec le compte créé
+   à l'étape 5 — depuis l'app Flutter d'administration ou via curl.
+4. Crée un produit de test, génère une clé (`php artisan license:generate`
+   en SSH, ou directement depuis l'app Flutter admin).
+5. Teste l'API publique :
 
 ```bash
 curl -s -X POST https://keys.agoudatech.com/api/v1/activate \
@@ -202,7 +216,7 @@ curl -s -X POST https://keys.agoudatech.com/api/v1/activate \
 
 Tu dois recevoir un JSON `{"payload": "...", "signature": "..."}`.
 
-5. Vérifie que `https://keys.agoudatech.com/.env` renvoie bien une erreur
+6. Vérifie que `https://keys.agoudatech.com/.env` renvoie bien une erreur
    (403/404), jamais le contenu du fichier.
 
 ---
@@ -217,6 +231,7 @@ php artisan migrate --force   # si nouvelles migrations
 php artisan config:clear && php artisan config:cache
 php artisan route:cache
 php artisan view:cache
+php artisan l5-swagger:generate
 ```
 
 ---
@@ -231,9 +246,17 @@ php artisan view:cache
       sous-domaine pointé directement sur `public/`.
 - [ ] `.env` inaccessible depuis le web (testé à l'étape 9).
 - [ ] HTTPS actif, `SESSION_SECURE_COOKIE=true`.
-- [ ] Mot de passe admin Filament fort, changé par rapport à celui de dev.
+- [ ] Mot de passe du compte admin fort, changé par rapport à celui de dev
+      (`php artisan admin:create-user`).
+- [ ] Activer le 2FA sur le compte admin depuis l'app Flutter (Réglages →
+      Authentification à deux facteurs) dès la mise en prod.
 - [ ] Envisager de renseigner `ADMIN_ALLOWED_IPS` si tu as une IP fixe
-      pour administrer le panel (§7.3.4 du cahier des charges).
+      pour administrer l'API (§7.3.4 du cahier des charges).
 - [ ] Penser à supprimer/désactiver l'ancien sous-domaine
       `licences.agoudatech.com` et sa base de données une fois la
       migration vers `keys.agoudatech.com` validée.
+- [ ] `/api/documentation` (Swagger UI) est public par défaut : elle décrit
+      la forme des endpoints mais n'expose aucun secret. Si tu préfères la
+      masquer en production, restreins-la par IP (même mécanisme que
+      `ADMIN_ALLOWED_IPS`) ou retire la route dans
+      `vendor/darkaonline/l5-swagger` — à évaluer selon ton contexte.

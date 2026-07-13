@@ -13,6 +13,7 @@ class LicenseKey extends Model
     protected $fillable = [
         'key_hash',
         'key_last4',
+        'key_encrypted',
         'product_id',
         'customer_id',
         'license_type',
@@ -31,6 +32,9 @@ class LicenseKey extends Model
             'revoked' => 'boolean',
             'revoked_at' => 'datetime',
             'max_activations' => 'integer',
+            // Chiffré avec APP_KEY ; déchiffré/rechiffré automatiquement par
+            // Eloquent à la lecture/écriture (§ voir migration).
+            'key_encrypted' => 'encrypted',
         ];
     }
 

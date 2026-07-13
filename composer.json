@@ -8,8 +8,9 @@
     "require": {
         "php": "^8.3",
         "bacon/bacon-qr-code": "^3.1",
-        "filament/filament": "^3.3",
+        "darkaonline/l5-swagger": "^11.1",
         "laravel/framework": "^13.8",
+        "laravel/sanctum": "^4.3",
         "laravel/tinker": "^3.0",
         "pragmarx/google2fa-qrcode": "^4.0"
     },
@@ -53,8 +54,7 @@
         ],
         "post-autoload-dump": [
             "Illuminate\\Foundation\\ComposerScripts::postAutoloadDump",
-            "@php artisan package:discover --ansi",
-            "@php artisan filament:upgrade"
+            "@php artisan package:discover --ansi"
         ],
         "post-update-cmd": [
             "@php artisan vendor:publish --tag=laravel-assets --ansi --force"
