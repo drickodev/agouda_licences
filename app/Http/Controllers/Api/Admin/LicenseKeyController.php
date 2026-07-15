@@ -4,20 +4,25 @@ namespace App\Http\Controllers\Api\Admin;
 
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Api\Admin\IndexLicenseKeyRequest;
+use App\Http\Requests\Api\Admin\RevealLicenseKeyRequest;
 use App\Http\Requests\Api\Admin\RevokeLicenseKeyRequest;
 use App\Http\Requests\Api\Admin\StoreLicenseKeyRequest;
 use App\Http\Requests\Api\Admin\UpdateLicenseKeyRequest;
 use App\Http\Resources\Admin\LicenseKeyResource;
 use App\Models\LicenseKey;
+use App\Models\LicenseLog;
 use App\Services\LicenseKeyGenerator;
 use Illuminate\Validation\ValidationException;
 use OpenApi\Attributes as OA;
+use PragmaRX\Google2FAQRCode\Google2FA;
 
 #[OA\Tag(name: 'Admin - Clés de licence')]
 class LicenseKeyController extends Controller
 {
-    public function __construct(private readonly LicenseKeyGenerator $generator)
-    {
+    public function __construct(
+        private readonly LicenseKeyGenerator $generator,
+        private readonly Google2FA $google2fa,
+    ) {
     }
 
     #[OA\Get(
@@ -233,22 +238,58 @@ class LicenseKeyController extends Controller
      * Redonne accès à la clé en clair (déchiffrée depuis key_encrypted) en
      * cas de perte côté éditeur. Absente pour les clés créées avant
      * l'introduction de ce champ.
+     *
+     * Action sensible (§audit sécurité, point 3) : exige une re-confirmation
+     * 2FA immédiate (code TOTP dans le body), même avec un token Sanctum
+     * valide et une session active, throttlée séparément et journalisée
+     * dans license_logs (admin, IP, horodatage).
      */
-    #[OA\Get(
+    #[OA\Post(
         path: '/api/admin/license-keys/{license_key}/reveal',
-        summary: 'Reconsulte la clé en clair (stockage chiffré réversible)',
+        summary: 'Reconsulte la clé en clair (nécessite un code 2FA)',
+        description: 'Re-confirmation 2FA immédiate requise même si le compte a une session active.',
         security: [['sanctum' => []]],
         tags: ['Admin - Clés de licence'],
         parameters: [new OA\Parameter(name: 'license_key', in: 'path', required: true, schema: new OA\Schema(type: 'integer'))],
+        requestBody: new OA\RequestBody(required: true, content: new OA\JsonContent(
+            required: ['code'],
+            properties: [new OA\Property(property: 'code', type: 'string', example: '123456')],
+        )),
         responses: [
             new OA\Response(response: 200, description: 'OK', content: new OA\JsonContent(properties: [
                 new OA\Property(property: 'plaintext_key', type: 'string'),
             ])),
             new OA\Response(response: 404, description: "Valeur en clair non disponible (clé créée avant l'ajout de ce stockage)"),
+            new OA\Response(response: 422, description: 'Code 2FA invalide', content: new OA\JsonContent(ref: '#/components/schemas/ValidationError')),
+            new OA\Response(response: 429, description: 'Trop de tentatives'),
         ],
     )]
-    public function reveal(LicenseKey $licenseKey)
+    public function reveal(RevealLicenseKeyRequest $request, LicenseKey $licenseKey)
     {
+        $user = $request->user();
+
+        if (! $user->hasTwoFactorEnabled() || ! $this->google2fa->verifyKey($user->two_factor_secret, $request->validated('code'))) {
+            LicenseLog::query()->create([
+                'license_key_id' => $licenseKey->id,
+                'event' => 'license_key_reveal',
+                'ip' => $request->ip(),
+                'success' => false,
+                'reason' => 'invalid_2fa_code',
+                'meta' => ['admin_id' => $user->id, 'admin_email' => $user->email],
+            ]);
+
+            throw ValidationException::withMessages(['code' => ['Code invalide.']]);
+        }
+
+        LicenseLog::query()->create([
+            'license_key_id' => $licenseKey->id,
+            'event' => 'license_key_reveal',
+            'ip' => $request->ip(),
+            'success' => $licenseKey->key_encrypted !== null,
+            'reason' => $licenseKey->key_encrypted === null ? 'plaintext_unavailable' : null,
+            'meta' => ['admin_id' => $user->id, 'admin_email' => $user->email],
+        ]);
+
         if ($licenseKey->key_encrypted === null) {
             return response()->json([
                 'message' => 'La valeur en clair de cette clé n\'est plus disponible (créée avant cette fonctionnalité).',

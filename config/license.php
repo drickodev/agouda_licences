@@ -67,6 +67,22 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Détection d'abus du X-App-Token partagé (§audit sécurité, point 2)
+    |--------------------------------------------------------------------------
+    |
+    | Contrairement à `anomaly` ci-dessus (raisonne par clé de licence), ceci
+    | surveille le nombre d'empreintes machine distinctes vues tous clients
+    | confondus : un signe possible de fuite du token unique.
+    |
+    */
+
+    'token_abuse' => [
+        'distinct_fingerprint_threshold' => env('LICENSE_TOKEN_ABUSE_FINGERPRINT_THRESHOLD', 50),
+        'window_minutes' => env('LICENSE_TOKEN_ABUSE_WINDOW_MINUTES', 60),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Durcissement du panel admin (§7.3.4)
     |--------------------------------------------------------------------------
     |
@@ -79,6 +95,22 @@ return [
         'trim',
         explode(',', (string) env('ADMIN_ALLOWED_IPS', ''))
     )),
+
+    /*
+    |--------------------------------------------------------------------------
+    | Documentation Swagger (§audit sécurité, point 1)
+    |--------------------------------------------------------------------------
+    |
+    | /api/documentation et /docs/api-docs.json exposent la totalité des
+    | routes admin : protégés par Basic Auth (identifiants vides = doc
+    | désactivée) en plus de l'IP allowlist ci-dessus.
+    |
+    */
+
+    'docs' => [
+        'username' => env('SWAGGER_DOCS_USERNAME'),
+        'password' => env('SWAGGER_DOCS_PASSWORD'),
+    ],
 
     /*
     |--------------------------------------------------------------------------

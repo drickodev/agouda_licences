@@ -1,5 +1,8 @@
 <?php
 
+use App\Http\Middleware\RequireTwoFactor;
+use App\Http\Middleware\RestrictApiDocs;
+use App\Http\Middleware\SecurityHeaders;
 use App\Http\Middleware\VerifyAppToken;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
@@ -14,8 +17,12 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     ->withMiddleware(function (Middleware $middleware): void {
+        $middleware->append(SecurityHeaders::class);
+
         $middleware->alias([
             'app.token' => VerifyAppToken::class,
+            'docs.restrict' => RestrictApiDocs::class,
+            '2fa.required' => RequireTwoFactor::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {

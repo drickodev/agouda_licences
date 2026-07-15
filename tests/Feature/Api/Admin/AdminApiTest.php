@@ -10,11 +10,32 @@ use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Hash;
 use Laravel\Sanctum\Sanctum;
+use PragmaRX\Google2FAQRCode\Google2FA;
 use Tests\TestCase;
 
 class AdminApiTest extends TestCase
 {
     use RefreshDatabase;
+
+    private function google2fa(): Google2FA
+    {
+        return app(Google2FA::class);
+    }
+
+    /**
+     * Crée un admin avec le 2FA activé et l'authentifie (customers et
+     * license-keys l'exigent désormais). Retourne le secret TOTP pour
+     * générer des codes dans les tests.
+     */
+    private function actingAsAdminWithTwoFactor(): string
+    {
+        $secret = $this->google2fa()->generateSecretKey();
+        $user = User::factory()->create();
+        $user->forceFill(['two_factor_secret' => $secret, 'two_factor_confirmed_at' => now()])->save();
+        Sanctum::actingAs($user);
+
+        return $secret;
+    }
 
     public function test_login_returns_a_token_and_logout_revokes_it(): void
     {
@@ -88,7 +109,7 @@ class AdminApiTest extends TestCase
 
     public function test_customer_crud(): void
     {
-        Sanctum::actingAs(User::factory()->create());
+        $this->actingAsAdminWithTwoFactor();
 
         $store = $this->postJson('/api/admin/customers', [
             'name' => 'Jean Dupont',
@@ -107,7 +128,7 @@ class AdminApiTest extends TestCase
 
     public function test_license_key_creation_exposes_plaintext_only_once_and_never_the_hash(): void
     {
-        Sanctum::actingAs(User::factory()->create());
+        $this->actingAsAdminWithTwoFactor();
         $product = Product::query()->create(['name' => 'Rouage', 'slug' => 'rouage', 'active' => true]);
 
         $store = $this->postJson('/api/admin/license-keys', [
@@ -130,9 +151,9 @@ class AdminApiTest extends TestCase
         $this->assertSame(substr($plaintextKey, -4), $show->json('data.key_last4'));
     }
 
-    public function test_license_key_reveal_returns_the_plaintext_previously_generated(): void
+    public function test_license_key_reveal_returns_the_plaintext_previously_generated_with_a_valid_2fa_code(): void
     {
-        Sanctum::actingAs(User::factory()->create());
+        $secret = $this->actingAsAdminWithTwoFactor();
         $product = Product::query()->create(['name' => 'Rouage', 'slug' => 'rouage', 'active' => true]);
 
         $store = $this->postJson('/api/admin/license-keys', [
@@ -143,13 +164,47 @@ class AdminApiTest extends TestCase
         $plaintextKey = $store->json('plaintext_key');
         $licenseKeyId = $store->json('license_key.id');
 
-        $reveal = $this->getJson("/api/admin/license-keys/{$licenseKeyId}/reveal");
+        $code = $this->google2fa()->getCurrentOtp($secret);
+
+        $reveal = $this->postJson("/api/admin/license-keys/{$licenseKeyId}/reveal", ['code' => $code]);
         $reveal->assertOk()->assertJsonPath('plaintext_key', $plaintextKey);
+
+        $this->assertDatabaseHas('license_logs', [
+            'license_key_id' => $licenseKeyId,
+            'event' => 'license_key_reveal',
+            'success' => true,
+        ]);
+    }
+
+    public function test_license_key_reveal_rejects_missing_or_invalid_2fa_code(): void
+    {
+        $this->actingAsAdminWithTwoFactor();
+        $product = Product::query()->create(['name' => 'Rouage', 'slug' => 'rouage', 'active' => true]);
+
+        $store = $this->postJson('/api/admin/license-keys', [
+            'product_id' => $product->id,
+            'license_type' => 'perpetual',
+            'max_activations' => 1,
+        ]);
+        $licenseKeyId = $store->json('license_key.id');
+
+        $this->postJson("/api/admin/license-keys/{$licenseKeyId}/reveal", [])
+            ->assertUnprocessable()->assertJsonValidationErrors(['code']);
+
+        $this->postJson("/api/admin/license-keys/{$licenseKeyId}/reveal", ['code' => '000000'])
+            ->assertUnprocessable()->assertJsonValidationErrors(['code']);
+
+        $this->assertDatabaseHas('license_logs', [
+            'license_key_id' => $licenseKeyId,
+            'event' => 'license_key_reveal',
+            'success' => false,
+            'reason' => 'invalid_2fa_code',
+        ]);
     }
 
     public function test_license_key_reveal_returns_404_when_encrypted_value_is_missing(): void
     {
-        Sanctum::actingAs(User::factory()->create());
+        $secret = $this->actingAsAdminWithTwoFactor();
         $product = Product::query()->create(['name' => 'Rouage', 'slug' => 'rouage', 'active' => true]);
         $licenseKey = LicenseKey::query()->create([
             'key_hash' => hash('sha256', 'PLAINTEXT-KEY'),
@@ -159,12 +214,15 @@ class AdminApiTest extends TestCase
             'max_activations' => 1,
         ]);
 
-        $this->getJson("/api/admin/license-keys/{$licenseKey->id}/reveal")->assertNotFound();
+        $code = $this->google2fa()->getCurrentOtp($secret);
+
+        $this->postJson("/api/admin/license-keys/{$licenseKey->id}/reveal", ['code' => $code])
+            ->assertNotFound();
     }
 
     public function test_license_key_subscription_requires_expires_at(): void
     {
-        Sanctum::actingAs(User::factory()->create());
+        $this->actingAsAdminWithTwoFactor();
         $product = Product::query()->create(['name' => 'Rouage', 'slug' => 'rouage', 'active' => true]);
 
         $this->postJson('/api/admin/license-keys', [
@@ -176,7 +234,7 @@ class AdminApiTest extends TestCase
 
     public function test_license_key_revoke_sets_expected_fields(): void
     {
-        Sanctum::actingAs(User::factory()->create());
+        $this->actingAsAdminWithTwoFactor();
         $product = Product::query()->create(['name' => 'Rouage', 'slug' => 'rouage', 'active' => true]);
         $licenseKey = LicenseKey::query()->create([
             'key_hash' => hash('sha256', 'PLAINTEXT-KEY'),
@@ -200,7 +258,7 @@ class AdminApiTest extends TestCase
 
     public function test_license_key_revoke_requires_a_reason(): void
     {
-        Sanctum::actingAs(User::factory()->create());
+        $this->actingAsAdminWithTwoFactor();
         $product = Product::query()->create(['name' => 'Rouage', 'slug' => 'rouage', 'active' => true]);
         $licenseKey = LicenseKey::query()->create([
             'key_hash' => hash('sha256', 'PLAINTEXT-KEY'),

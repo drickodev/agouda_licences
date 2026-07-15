@@ -44,11 +44,21 @@ Route::prefix('admin')->group(function () {
         Route::post('2fa/disable', [Admin\TwoFactorController::class, 'disable']);
 
         Route::apiResource('products', Admin\ProductController::class);
-        Route::apiResource('customers', Admin\CustomerController::class);
 
-        Route::apiResource('license-keys', Admin\LicenseKeyController::class);
-        Route::post('license-keys/{license_key}/revoke', [Admin\LicenseKeyController::class, 'revoke']);
-        Route::get('license-keys/{license_key}/reveal', [Admin\LicenseKeyController::class, 'reveal']);
+        // Routes sensibles (§audit sécurité, point 4) : 2FA obligatoire, pas
+        // seulement un token Sanctum valide.
+        Route::middleware('2fa.required')->group(function () {
+            Route::apiResource('customers', Admin\CustomerController::class);
+
+            Route::apiResource('license-keys', Admin\LicenseKeyController::class);
+            Route::post('license-keys/{license_key}/revoke', [Admin\LicenseKeyController::class, 'revoke']);
+
+            // Re-confirmation 2FA immédiate en plus du 2FA obligatoire
+            // ci-dessus (§audit sécurité, point 3) : throttle dédié, plus
+            // strict que le reste du groupe admin.
+            Route::post('license-keys/{license_key}/reveal', [Admin\LicenseKeyController::class, 'reveal'])
+                ->middleware('throttle:license-key-reveal');
+        });
 
         Route::apiResource('activations', Admin\ActivationController::class);
         Route::post('activations/{activation}/release', [Admin\ActivationController::class, 'release']);
