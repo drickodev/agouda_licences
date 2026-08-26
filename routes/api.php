@@ -32,6 +32,11 @@ Route::prefix('admin')->group(function () {
     // token Sanctum n'est délivré qu'à l'issue de cette vérification.
     Route::post('/2fa/challenge', [Admin\TwoFactorController::class, 'challenge'])->middleware('throttle:10,1');
 
+    // Mot de passe oublié : demande de code (email) puis réinitialisation
+    // (email + code + nouveau mot de passe), non authentifiées.
+    Route::post('/password/forgot', [Admin\PasswordResetController::class, 'forgot'])->middleware('throttle:6,1');
+    Route::post('/password/reset', [Admin\PasswordResetController::class, 'reset'])->middleware('throttle:6,1');
+
     Route::middleware(['auth:sanctum', RestrictAdminByIp::class])->group(function () {
         Route::post('/logout', [Admin\AuthController::class, 'logout']);
         Route::get('/me', [Admin\AuthController::class, 'me']);

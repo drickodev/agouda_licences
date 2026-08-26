@@ -3,6 +3,7 @@
 namespace App\Models;
 
 // use Illuminate\Contracts\Auth\MustVerifyEmail;
+use App\Notifications\AdminPasswordResetNotification;
 use Database\Factories\UserFactory;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Attributes\Hidden;
@@ -41,5 +42,14 @@ class User extends Authenticatable
     public function hasTwoFactorEnabled(): bool
     {
         return $this->two_factor_secret !== null && $this->two_factor_confirmed_at !== null;
+    }
+
+    /**
+     * Remplace la notification par défaut de Laravel (lien cliquable) : pas
+     * de frontend web à ce jour, uniquement l'app admin Flutter.
+     */
+    public function sendPasswordResetNotification($token): void
+    {
+        $this->notify(new AdminPasswordResetNotification($token));
     }
 }
