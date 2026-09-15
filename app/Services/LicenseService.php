@@ -44,9 +44,18 @@ class LicenseService
         return DB::transaction(function () use ($request, $key, $data) {
             $key->refresh();
 
-            $existing = $key->activationFor($data['machine_fingerprint']);
+            // Cherche TOUTE activation existante pour ce couple (clé, empreinte), pas seulement
+            // les actives : `activations` porte une contrainte unique sur (license_key_id,
+            // machine_fingerprint) indépendante du statut, donc une ligne "released" (créée par
+            // deactivate()) existe toujours après un transfert de machine. Ne considérer que les
+            // lignes actives ici ferait tomber sur Activation::create() ci-dessous et percuter
+            // cette contrainte unique — exception SQL non interceptée, 500 (bug corrigé ici).
+            $existing = Activation::query()
+                ->where('license_key_id', $key->id)
+                ->where('machine_fingerprint', $data['machine_fingerprint'])
+                ->first();
 
-            if ($existing) {
+            if ($existing && $existing->status === 'active') {
                 $existing->update([
                     'last_seen_at' => now(),
                     'last_ip' => $request->ip(),
@@ -58,6 +67,20 @@ class LicenseService
 
             if (! $key->hasFreeSeat()) {
                 return $this->refuse($request, $key, 'seat_limit_reached', $data);
+            }
+
+            if ($existing) {
+                // Réactivation d'une machine précédemment libérée (transfert puis retour) :
+                // on réutilise la ligne existante plutôt que d'en créer une seconde.
+                $existing->update([
+                    'status' => 'active',
+                    'released_at' => null,
+                    'machine_name' => $data['machine_name'] ?? $existing->machine_name,
+                    'last_ip' => $request->ip(),
+                    'last_seen_at' => now(),
+                ]);
+
+                return $this->success($request, $key, $data);
             }
 
             Activation::query()->create([
